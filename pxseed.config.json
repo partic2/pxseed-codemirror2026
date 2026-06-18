@@ -1,0 +1,38 @@
+{
+    "name": "partic2/codemirror2026",
+    "loaders": [
+        {
+            "name": "copyFiles",
+            "include": [
+                "assets/**/*"
+            ]
+        },
+        {
+            "name": "typescript"
+        },{
+        "name":"rollup",
+        "entryModules":[
+            "codemirror","@codemirror/state","@codemirror/lang-javascript","@codemirror/view","@codemirror/language","@codemirror/lint","@codemirror/autocomplete","@codemirror/commands","@codemirror/search",
+            "vscode-languageserver-protocol","@codemirror/language"
+            ], 
+        "bundle":["crelt"]
+        }
+    ],
+    "description": "",
+    "options": {
+        "partic2/packageManager/registry": {
+            "webui": {
+                "entry": "partic2/codemirror2026/webui",
+                "label": "partic2/codemirror2026"
+            },
+            "dependencies": ["npm:codemirror","npm:@codemirror/lsp-client","npm:@codemirror/lang-javascript","npm:codemirror",
+        "npm:@marijn/find-cluster-break","npm:@lezer/common","npm:@lezer/highlight"],
+            "repositories": {
+                "partic2": [
+                    "https://gitee.com/partic/pxseed-${subname}.git",
+                    "https://github.com/partic2/pxseed-${subname}.git"
+                ]
+            }
+        }
+    }
+}
