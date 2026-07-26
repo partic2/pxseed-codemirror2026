@@ -19,7 +19,7 @@
         }
     ],
     "description": "",
-    "options": {
+    "extra": {
         "partic2/packageManager/registry": {
             "webui": {
                 "entry": "partic2/codemirror2026/webui",

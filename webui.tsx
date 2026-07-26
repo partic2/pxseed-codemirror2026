@@ -4,10 +4,10 @@ import { openNewWindow } from 'partic2/pComponentUi/workspace'
 import { requirejs, throwIfAbortError } from 'partic2/jsutils1/base';
 import { GetJsEntry, path } from 'partic2/jsutils1/webutils';
 import { ReactRefEx } from 'partic2/pComponentUi/domui';
-import { Transport } from './lsp-client';
+import { Transport } from './lsp-client/index';
 import { easyCallRemoteJsonFunction, getPersistentRegistered, importRemoteModule, ServerHostWorker1RpcName } from 'partic2/pxprpcClient/registry'
 import { LanguageServerConnection, PxseedExtendLanguageServer } from 'partic2/typescriptLanguageServer2026/pxseedutils/lspproxy'
-import { RequestMessage, NotificationMessage, ResponseMessage } from 'vscode-jsonrpc/lib/common/messages';
+import type { RequestMessage, NotificationMessage, ResponseMessage } from 'vscode-jsonrpc/lib/common/messages';
 const __name__ = requirejs.getLocalRequireModule(require);
 
 
@@ -139,7 +139,7 @@ async function codeMirrorDemoWithTsLsp() {
     await openNewWindow(<div ref={div1Ref} style={{ height: '100%', minHeight: '100px' }}></div>,
         {title:'Code mirror demo with ts lsp(cell 1)',parentWindow:handler});
     let div1 = await div1Ref.waitValid();
-    new cm.EditorView({
+    let ev=new cm.EditorView({
         state: cms.EditorState.create({
             extensions: [
                 cm.basicSetup, cmjs.javascript({ typescript: true }), cmv.keymap.of([
@@ -153,6 +153,13 @@ async function codeMirrorDemoWithTsLsp() {
         }),
         parent: div1
     });
+    ev.dispatch({
+        changes:{from:0,insert:'112233'}
+    });
+    ev.dispatch({
+        changes:{from:0,to:ev.state.doc.toString().length,insert:'LoL'}
+    });
+    
         
     let div3Ref=new ReactRefEx<HTMLDivElement>();
     let cell3Part=await lsptransport.lspp.allocateFilePart(tsdemopath);
