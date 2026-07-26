@@ -125,14 +125,14 @@ async function codeMirrorDemoWithTsLsp() {
     let remoteWWWRoot=await easyCallRemoteJsonFunction(rpc1,'partic2/jsutils1/webutils','getWWWRoot',[]) as string;
     let tsdemopath=path.join(remoteWWWRoot.replace(/\\/g,'/'),'..','source/partic2/codemirror2026/webui.tsx');
     if(!tsdemopath.startsWith('/'))tsdemopath='/'+tsdemopath;
-    tsdemopath='file://'+tsdemopath;
+    tsdemopath='file://'+tsdemopath.replace(/:/g,'%3A');
     let lsptransport=new CmLspTransport(await remoteLspConnection.createLspConnection({showMessageLevel:2}));
     let client = new cmlsp.LSPClient({ extensions: cmlsp.languageServerExtensions() }).connect(lsptransport);
     await client.initializing;
 
     let predefinePart=await lsptransport.lspp.allocateFilePart(tsdemopath);
-    await lsptransport.lspp.sendDidOpen({uri:predefinePart.uri(),languageId:'typescript'});
-    await lsptransport.lspp.sendDidChange({uri:predefinePart.uri(),change:{text:'let _G=globalThis;'}});
+    await lsptransport.lspp.sendDidOpen({uri:predefinePart.uri,languageId:'typescript'});
+    await lsptransport.lspp.sendDidChange({uri:predefinePart.uri,change:{text:'let _G=globalThis;'}});
 
     let div1Ref = new ReactRefEx<HTMLDivElement>();
     let cell1Part=await lsptransport.lspp.allocateFilePart(tsdemopath);
@@ -148,7 +148,7 @@ async function codeMirrorDemoWithTsLsp() {
                         run: cmc.acceptCompletion,
                     },
                 ]),
-                client.plugin(cell1Part.uri(), 'typescript')
+                client.plugin(cell1Part.uri, 'typescript')
             ],
         }),
         parent: div1
@@ -175,7 +175,7 @@ async function codeMirrorDemoWithTsLsp() {
                             run: cmc.acceptCompletion,
                         },
                     ]),
-                    client.plugin(cell3Part.uri(), 'typescript')
+                    client.plugin(cell3Part.uri, 'typescript')
                 ],
             }),
             parent: div3
@@ -195,7 +195,7 @@ async function codeMirrorDemoWithTsLsp() {
                             run: cmc.acceptCompletion,
                         },
                     ]),
-                    client.plugin(cell2Part.uri(), 'typescript')
+                    client.plugin(cell2Part.uri, 'typescript')
                 ],
             }),
             parent: div2
