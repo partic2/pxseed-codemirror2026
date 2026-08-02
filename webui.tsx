@@ -111,6 +111,10 @@ class LspConsole extends React.Component<{}, { history: Array<{ level: 'info' | 
 
 }
 
+import type {EditorView} from '@codemirror/view'
+
+
+
 async function codeMirrorDemoWithTsLsp() {
     let handler = await openNewWindow(<LspConsole ref={lspConsole} />, { title:'language server log' });
     await lspConsole.waitValid();
@@ -130,34 +134,52 @@ async function codeMirrorDemoWithTsLsp() {
     let client = new cmlsp.LSPClient({ extensions: cmlsp.languageServerExtensions() }).connect(lsptransport);
     await client.initializing;
 
+    await lsptransport.lspp.ensureFileDidOpen({uri:tsdemopath,languageId:'typescript'});
     let predefinePart=await lsptransport.lspp.allocateFilePart(tsdemopath);
-    await lsptransport.lspp.sendDidOpen({uri:predefinePart.uri,languageId:'typescript'});
-    await lsptransport.lspp.sendDidChange({uri:predefinePart.uri,change:{text:'let _G=globalThis;'}});
+    await lsptransport.lspp.sendDidChange({uri:predefinePart.uri,change:{text:`declare let deleteVariables:(names:string[])=>void`}});
 
     let div1Ref = new ReactRefEx<HTMLDivElement>();
     let cell1Part=await lsptransport.lspp.allocateFilePart(tsdemopath);
     await openNewWindow(<div ref={div1Ref} style={{ height: '100%', minHeight: '100px' }}></div>,
         {title:'Code mirror demo with ts lsp(cell 1)',parentWindow:handler});
     let div1 = await div1Ref.waitValid();
+
+    let codeMirrorBoundSymbol=Symbol.for('codeMirrorBoundSymbol')
+
+    let gotoDefinition=(target:EditorView)=>{
+        let at=target.state.selection.main.head;
+        let line=target.state.doc.lineAt(at);
+        let ch=at-line.from;
+        (async ()=>{
+            debugger
+            let t1=await lsptransport.lspp.getFilePartDefinition({line:line.number-1,character:ch,textDocument:{uri:(target as any)[codeMirrorBoundSymbol].tsurl}})
+            debugger;
+        })();
+        return true;
+    }
+
+    let keymap=cms.Prec.high(cmv.keymap.of([
+        {
+            key: 'Tab',
+            run: cmc.acceptCompletion,
+        },{
+            key:'Ctrl-2',
+            run: gotoDefinition
+        }
+    ]))
+
     let ev=new cm.EditorView({
         state: cms.EditorState.create({
             extensions: [
-                cm.basicSetup, cmjs.javascript({ typescript: true }), cmv.keymap.of([
-                    {
-                        key: 'Tab',
-                        run: cmc.acceptCompletion,
-                    },
-                ]),
+                cm.basicSetup, cmjs.javascript({ typescript: true }), keymap,
                 client.plugin(cell1Part.uri, 'typescript')
             ],
         }),
         parent: div1
     });
+    (ev as any)[codeMirrorBoundSymbol]={tsurl:cell1Part.uri};
     ev.dispatch({
-        changes:{from:0,insert:'112233'}
-    });
-    ev.dispatch({
-        changes:{from:0,to:ev.state.doc.toString().length,insert:'LoL'}
+        changes:{from:0,to:ev.state.doc.toString().length,insert:`let _ENV=globalThis;\nconsole.info("hello codemirror")`}
     });
     
         
@@ -165,42 +187,33 @@ async function codeMirrorDemoWithTsLsp() {
     let cell3Part=await lsptransport.lspp.allocateFilePart(tsdemopath);
     await openNewWindow(<div ref={div3Ref} style={{ height: '100%', minHeight: '100px' }}></div>,
         {title:'Code mirror demo with ts lsp(cell 3)',parentWindow:handler});
-        let div3 = await div3Ref.waitValid();
-        new cm.EditorView({
-            state: cms.EditorState.create({
-                extensions: [
-                    cm.basicSetup, cmjs.javascript({ typescript: true }), cmv.keymap.of([
-                        {
-                            key: 'Tab',
-                            run: cmc.acceptCompletion,
-                        },
-                    ]),
-                    client.plugin(cell3Part.uri, 'typescript')
-                ],
-            }),
-            parent: div3
-        });
+    let div3 = await div3Ref.waitValid();
+    ev=new cm.EditorView({
+        state: cms.EditorState.create({
+            extensions: [
+                cm.basicSetup, cmjs.javascript({ typescript: true }), keymap,
+                client.plugin(cell3Part.uri, 'typescript')
+            ],
+        }),
+        parent: div3
+    });
+    (ev as any)[codeMirrorBoundSymbol]={tsurl:cell3Part.uri};
 
     let div2Ref=new ReactRefEx<HTMLDivElement>();
     let cell2Part=await lsptransport.lspp.allocateFilePart(tsdemopath,{insertBefore:cell3Part});
     await openNewWindow(<div ref={div2Ref} style={{ height: '100%', minHeight: '100px' }}></div>,
         {title:'Code mirror demo with ts lsp(cell 2)',parentWindow:handler});
-        let div2 = await div2Ref.waitValid();
-        new cm.EditorView({
-            state: cms.EditorState.create({
-                extensions: [
-                    cm.basicSetup, cmjs.javascript({ typescript: true }), cmv.keymap.of([
-                        {
-                            key: 'Tab',
-                            run: cmc.acceptCompletion,
-                        },
-                    ]),
-                    client.plugin(cell2Part.uri, 'typescript')
-                ],
-            }),
-            parent: div2
-        });
-
+    let div2 = await div2Ref.waitValid();
+    ev=new cm.EditorView({
+        state: cms.EditorState.create({
+            extensions: [
+                cm.basicSetup, cmjs.javascript({ typescript: true }), keymap,
+                client.plugin(cell2Part.uri, 'typescript')
+            ],
+        }),
+        parent: div2
+    });
+    (ev as any)[codeMirrorBoundSymbol]={tsurl:cell1Part.uri};
     await handler.waitClose();
 }
 
