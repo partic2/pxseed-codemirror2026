@@ -1,13 +1,24 @@
 
 import * as React from 'preact'
-import { openNewWindow } from 'partic2/pComponentUi/workspace'
-import { requirejs, throwIfAbortError } from 'partic2/jsutils1/base';
+import { NewWindowHandle, openNewWindow } from 'partic2/pComponentUi/workspace'
+import { assert, GenerateRandomString, requirejs, throwIfAbortError } from 'partic2/jsutils1/base';
 import { GetJsEntry, path } from 'partic2/jsutils1/webutils';
 import { ReactRefEx } from 'partic2/pComponentUi/domui';
 import { Transport } from './lsp-client/index';
-import { easyCallRemoteJsonFunction, getPersistentRegistered, importRemoteModule, ServerHostWorker1RpcName } from 'partic2/pxprpcClient/registry'
+import { easyCallRemoteJsonFunction, getAttachedRemoteRigstryFunction, getPersistentRegistered, importRemoteModule, openConnectionFromUrl, ServerHostWorker1RpcName } from 'partic2/pxprpcClient/registry'
 import { LanguageServerConnection, PxseedExtendLanguageServer } from 'partic2/typescriptLanguageServer2026/pxseedutils/lspproxy'
+import {TjsSfs} from 'partic2/CodeRunner/JsEnviron'
+
+import type {EditorView} from '@codemirror/view'
+import { RpcExtendClient1 } from 'pxprpc/extend';
+import { Client } from 'pxprpc/base';
+import { Singleton, utf8conv } from 'partic2/CodeRunner/jsutils2';
+import { buildTjs } from 'partic2/tjshelper/tjsbuilder';
+
 import type { RequestMessage, NotificationMessage, ResponseMessage } from 'vscode-jsonrpc/lib/common/messages';
+
+
+
 const __name__ = requirejs.getLocalRequireModule(require);
 
 
@@ -31,12 +42,12 @@ class CmLspTransport implements Transport {
         this.lspp=new PxseedExtendLanguageServer({
             async send(message: RequestMessage | NotificationMessage): Promise<void> {
                 let encmsg=JSON.stringify(message);
-                lspConsole.current?.info({summary:'SEND ENCODED DATA',detail:encmsg})
+                //lspConsole.current?.info({summary:'SEND ENCODED DATA',detail:encmsg})
                 await lspserver.writeMessage(encmsg);
             },
             async receive(): Promise<ResponseMessage | NotificationMessage> {
                 let encmsg=await lspserver.readMessage();
-                lspConsole.current?.info({summary:'RECV ENCODED DATA',detail:encmsg})
+                //lspConsole.current?.info({summary:'RECV ENCODED DATA',detail:encmsg})
                 return JSON.parse(encmsg)
             },
             close(){lspserver.close();}
@@ -111,11 +122,93 @@ class LspConsole extends React.Component<{}, { history: Array<{ level: 'info' | 
 
 }
 
-import type {EditorView} from '@codemirror/view'
 
 
 
-async function codeMirrorDemoWithTsLsp() {
+async function codemirrorDemoLanguageServerThreadFactory(){
+    let conn=await openConnectionFromUrl('iooverpxprpc:server host/'+encodeURIComponent(`webworker:${__name__}.codemirrorDemoLanguageThread`));
+    assert(conn!=null);
+    let client=await new RpcExtendClient1(new Client(conn)).init();
+    return client;
+}
+
+export let codemirrorDemoLanguageServerThread=new Singleton(codemirrorDemoLanguageServerThreadFactory)
+
+export async function resetcodemirrorDemoLanguageServerThread(){
+    if(codemirrorDemoLanguageServerThread.done){
+        let func=await getAttachedRemoteRigstryFunction(codemirrorDemoLanguageServerThread);
+        await func.jsExec(`globalThis.close();`,null).catch((err)=>{});
+        codemirrorDemoLanguageServerThread=new Singleton(codemirrorDemoLanguageServerThreadFactory);
+    }
+}
+
+import type {LSPClient} from 'partic2/codemirror2026/lsp-client/index';
+async function openTsFileInSubwindow(parentWindow:NewWindowHandle,client:LSPClient){
+    let cm = await import('codemirror');
+    let cms = await import('@codemirror/state')
+    let cmv = await import('@codemirror/view')
+    let cmjs = await import('@codemirror/lang-javascript');
+    let cmc = await import('@codemirror/autocomplete');
+    
+    let remoteWWWRoot=await easyCallRemoteJsonFunction(codemirrorDemoLanguageServerThread,'partic2/jsutils1/webutils','getWWWRoot',[]) as string;
+
+    let tsfiles=['source/partic2/codemirror2026/webui.tsx','source/partic2/pxprpcClient/registry.ts','source/partic2/packageManager/misc.ts',
+        'source/partic2/jsutils1/serviceworker.ts','source/partic2/JsNotebook/filebrowser.tsx','source/partic2/nodehelper/env.ts'
+    ].map(t1=>path.join(remoteWWWRoot.replace(/\\/g,'/'),'..',t1)).map(t1=>'file://'+(t1.startsWith('/')?'':'/')+t1.replace(/:/g,'%3A'));
+    let keymap=cms.Prec.high(cmv.keymap.of([
+        {
+            key: 'Tab',
+            run: cmc.acceptCompletion,
+        }
+    ]));
+    let fs=new TjsSfs().from(await buildTjs());
+    for(let t1 of tsfiles){
+        let divRef=new ReactRefEx<HTMLDivElement>();
+        let newWnd=await openNewWindow(<div ref={divRef} style={{ height: '100%', minHeight: '100px' }}></div>,
+            {title:t1,parentWindow:parentWindow});
+        let div=await divRef.waitValid();
+        let ev=new cm.EditorView({
+            state: cms.EditorState.create({
+                extensions: [
+                    cm.basicSetup, cmjs.javascript({ typescript: true }), keymap,
+                    client.plugin(t1, 'typescript')
+                ],
+            }),
+            parent: div
+        });
+        newWnd.waitClose().then(()=>{
+            ev.destroy();
+        })
+        let bindata=await fs.readAll(t1.substring(7));
+        if(bindata!=null){
+            let content=utf8conv(bindata);
+            ev.dispatch({changes:{from:0,to:ev.state.doc.length,insert:content}});
+        }
+    }
+}
+
+async function codemirrorDemoWithTsLsp(){
+    await resetcodemirrorDemoLanguageServerThread();
+    let remoteLspConnectionMod=await importRemoteModule(codemirrorDemoLanguageServerThread,'partic2/typescriptLanguageServer2026/lsp-connection') as typeof import('partic2/typescriptLanguageServer2026/lsp-connection')
+    let conn=await remoteLspConnectionMod.createLspConnection({showMessageLevel:2});
+    let lsptransport=new CmLspTransport(conn);
+    let cmlsp = await import('partic2/codemirror2026/lsp-client/index')
+    let client = new cmlsp.LSPClient({ extensions: cmlsp.languageServerExtensions() }).connect(lsptransport);
+    await client.initializing;
+    let handler = await openNewWindow(<div style={{minHeight:'400px',display:'flex',flexDirection:'column',height:'100%'}}>
+        <div style={{flex:1,minHeight:'0px'}}><LspConsole ref={lspConsole}/></div>
+        <button style={{flexShrink:1}} onClick={async ()=>{
+            openTsFileInSubwindow(handler,client);
+        }}>OPEN Files</button>
+    </div>, { title:'language server log' });
+    await lspConsole.waitValid();
+    let remoteTsService=await importRemoteModule(codemirrorDemoLanguageServerThread,'partic2/typescriptLanguageServer2026/tsServer/serverProcess') as typeof import('partic2/typescriptLanguageServer2026/tsServer/serverProcess');
+    handler.waitClose().then(()=>{conn.close();null})
+}
+
+
+async function codemirrorNotebookDemoWithTsLsp() {
+    await resetcodemirrorDemoLanguageServerThread();
     let handler = await openNewWindow(<LspConsole ref={lspConsole} />, { title:'language server log' });
     await lspConsole.waitValid();
     let cm = await import('codemirror');
@@ -124,9 +217,8 @@ async function codeMirrorDemoWithTsLsp() {
     let cmjs = await import('@codemirror/lang-javascript');
     let cmlsp = await import('partic2/codemirror2026/lsp-client/index')
     let cmc = await import('@codemirror/autocomplete');
-    let rpc1=await (await getPersistentRegistered(ServerHostWorker1RpcName))!.ensureConnected();
-    let remoteLspConnection=await importRemoteModule(rpc1,'partic2/typescriptLanguageServer2026/lsp-connection')
-    let remoteWWWRoot=await easyCallRemoteJsonFunction(rpc1,'partic2/jsutils1/webutils','getWWWRoot',[]) as string;
+    let remoteLspConnection=await importRemoteModule(codemirrorDemoLanguageServerThread,'partic2/typescriptLanguageServer2026/lsp-connection')
+    let remoteWWWRoot=await easyCallRemoteJsonFunction(codemirrorDemoLanguageServerThread,'partic2/jsutils1/webutils','getWWWRoot',[]) as string;
     let tsdemopath=path.join(remoteWWWRoot.replace(/\\/g,'/'),'..','source/partic2/codemirror2026/webui.tsx');
     if(!tsdemopath.startsWith('/'))tsdemopath='/'+tsdemopath;
     tsdemopath='file://'+tsdemopath.replace(/:/g,'%3A');
@@ -146,25 +238,10 @@ async function codeMirrorDemoWithTsLsp() {
 
     let codeMirrorBoundSymbol=Symbol.for('codeMirrorBoundSymbol')
 
-    let gotoDefinition=(target:EditorView)=>{
-        let at=target.state.selection.main.head;
-        let line=target.state.doc.lineAt(at);
-        let ch=at-line.from;
-        (async ()=>{
-            debugger
-            let t1=await lsptransport.lspp.getFilePartDefinition({line:line.number-1,character:ch,textDocument:{uri:(target as any)[codeMirrorBoundSymbol].tsurl}})
-            debugger;
-        })();
-        return true;
-    }
-
     let keymap=cms.Prec.high(cmv.keymap.of([
         {
             key: 'Tab',
             run: cmc.acceptCompletion,
-        },{
-            key:'Ctrl-2',
-            run: gotoDefinition
         }
     ]))
 
@@ -220,6 +297,6 @@ async function codeMirrorDemoWithTsLsp() {
 //Open from packageManager.
 export function main(args: string) {
     if (args == 'webui') {
-        codeMirrorDemoWithTsLsp()
+        codemirrorDemoWithTsLsp();
     }
 }
