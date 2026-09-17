@@ -114,6 +114,64 @@ function applyEdits(edits: readonly TextEdit[], text: string, mapped: ChangeDesc
   }
 }
 
+function makeResolveApply(
+  plugin: LSPPlugin,
+  item: lsp.CompletionItem,
+  insert: string | ((view: EditorView, c: Completion, from: number, to: number) => void)
+) {
+  return (view: EditorView, completion: Completion, from: number, to: number)  => {
+    debugger
+    // 保存插入前的文档和插入参数
+    let docBefore = view.state.doc
+    let inserted: {from: number, to: number, text: string} | null =
+      typeof insert == "string" ? {from, to, text: insert} : null
+
+    // 执行主插入
+    if (typeof insert == "function") {
+      insert(view, completion, from, to)
+    } else {
+      let base = insertCompletionText(view.state, insert, from, to)
+      view.dispatch(base)
+    }
+
+    // 异步 resolve
+    plugin.client.request<lsp.CompletionItem, lsp.CompletionItem>(
+      "completionItem/resolve",
+      item
+    ).then(resolved => {
+      if (!view.dom.isConnected) return
+      let edits = resolved.additionalTextEdits
+      if (!edits || !edits.length) return
+
+      // 把 resolve 的 range（基于 docBefore）映射到当前文档
+      let changes: ChangeSpec[] = []
+      for (let edit of edits) {
+        let sf = fromPositionChecked(docBefore, edit.range.start)
+        let st = fromPositionChecked(docBefore, edit.range.end)
+        if (sf == null || st == null) continue
+
+        // 若 edit 与被替换区间 [from, to] 重叠，跳过（避免破坏主插入）
+        if (inserted) {
+          if (sf < to && st > from) continue
+          // 映射到当前文档
+          let delta = inserted.text.length - (inserted.to - inserted.from)
+          let nf = sf >= inserted.to ? sf + delta : sf
+          let nt = st >= inserted.to ? st + delta : st
+          if (nf > nt) continue
+          changes.push({from: nf, to: nt, insert: edit.newText})
+        } else {
+          // snippet 路径：无法精确映射，退化为直接使用原位置（可能偏移）
+          changes.push({from: sf, to: st, insert: edit.newText})
+        }
+      }
+      if (changes.length) view.dispatch({changes})
+    }, err => {
+      if ("code" in err && (err as lsp.ResponseError).code == -32800) return
+      console.error("completionItem/resolve failed", err)
+    })
+  }
+}
+
 /// A completion source that requests completions from a language
 /// server.
 export const serverCompletionSource: CompletionSource = context => {
@@ -132,38 +190,50 @@ export const serverCompletionSource: CompletionSource = context => {
     let defaultCommitChars = result.itemDefaults?.commitCharacters
     let config = context.state.facet(completionConfig)
     let extraEdits: ExtraEdits[] = []
-
     return {
       from, to,
       options: result.items.map<Completion>((item, i) => {
-        let text = item.textEdit?.newText || item.textEditText || item.insertText || item.label
-        let option: Completion = {
-          label: item.filterText || item.label,
-          displayLabel: item.label,
-          type: item.kind && kindToType[item.kind],
-        }
-        let insertTextFormat = item.insertTextFormat ?? result.itemDefaults?.insertTextFormat
-        if (item.commitCharacters && item.commitCharacters != defaultCommitChars)
-          option.commitCharacters = item.commitCharacters
-        if (item.detail) option.detail = item.detail
-        if (item.sortText) option.sortText = item.sortText
-        if (insertTextFormat == 2 /* Snippet */) {
-          option.apply = (view, c, from, to) => snippet(lspToSnippet(text))(view, c, from, to)
-        } else if (item.additionalTextEdits) {
-          let edits: TextEdit[] = []
-          for (let edit of item.additionalTextEdits) {
-            let from = fromPositionChecked(context.state.doc, edit.range.start)
-            let to = fromPositionChecked(context.state.doc, edit.range.end)
-            if (from != null && to != null) edits.push({from, to, text: edit.newText})
-          }
-          extraEdits.push({index: i, text, edits})
-          option.apply = applyEdits(edits, text, null)
-        } else if (option.label != text) {
-          option.apply = text
-        }
-        if (item.documentation) option.info = () => renderDocInfo(plugin, item.documentation!)
-        return option
-      }),
+    let text = item.textEdit?.newText || item.textEditText || item.insertText || item.label
+    let option: Completion = {
+      label: item.filterText || item.label,
+      displayLabel: item.label,
+      type: item.kind && kindToType[item.kind],
+    }
+    let insertTextFormat = item.insertTextFormat ?? result.itemDefaults?.insertTextFormat
+    if (item.commitCharacters && item.commitCharacters != defaultCommitChars)
+      option.commitCharacters = item.commitCharacters
+    if (item.detail) option.detail = item.detail
+    if (item.sortText) option.sortText = item.sortText
+
+    let canResolve = !!plugin.client.serverCapabilities?.completionProvider?.resolveProvider
+      && item.data !== undefined
+      && !item.additionalTextEdits
+
+    if (insertTextFormat == 2 /* Snippet */) {
+      if (canResolve) {
+        option.apply = makeResolveApply(plugin, item, (view, c, from, to) =>
+          snippet(lspToSnippet(text))(view, c, from, to))
+      } else {
+        option.apply = (view, c, from, to) => snippet(lspToSnippet(text))(view, c, from, to)
+      }
+    } else if (item.additionalTextEdits) {
+      let edits: TextEdit[] = []
+      for (let edit of item.additionalTextEdits) {
+        let from = fromPositionChecked(context.state.doc, edit.range.start)
+        let to = fromPositionChecked(context.state.doc, edit.range.end)
+        if (from != null && to != null) edits.push({from, to, text: edit.newText})
+      }
+      extraEdits.push({index: i, text, edits})
+      option.apply = applyEdits(edits, text, null)
+    } else if (canResolve) {
+      option.apply = makeResolveApply(plugin, item, text)
+    } else if (option.label != text) {
+      option.apply = text
+    }
+
+    if (item.documentation) option.info = () => renderDocInfo(plugin, item.documentation!)
+    return option
+  }),
       commitCharacters: defaultCommitChars,
       validFor: result.isIncomplete ? undefined : (config.validFor ?? prefixRegexp(result.items)),
       map: extraEdits.length ? resultMapper(null, extraEdits) : undefined
