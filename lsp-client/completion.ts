@@ -1,4 +1,4 @@
-import type * as lsp from "vscode-languageserver-protocol"
+import type * as lsp from "vscode-languageserver-protocol/lib/common/api"
 import {EditorState, Extension, Facet, ChangeDesc, ChangeSpec} from "@codemirror/state"
 import {EditorView} from "@codemirror/view"
 import {CompletionSource, Completion, CompletionResult, CompletionContext,
@@ -146,22 +146,28 @@ function makeResolveApply(
       // 把 resolve 的 range（基于 docBefore）映射到当前文档
       let changes: ChangeSpec[] = []
       for (let edit of edits) {
-        let sf = fromPositionChecked(docBefore, edit.range.start)
-        let st = fromPositionChecked(docBefore, edit.range.end)
-        if (sf == null || st == null) continue
+        let uri:string|null=null;
+        if((edit as any).textDocument!=undefined){
+          uri=(edit as any).textDocument.uri;
+        }
+        if(uri===null || uri===plugin.uri){
+          let sf = fromPositionChecked(docBefore, edit.range.start)
+          let st = fromPositionChecked(docBefore, edit.range.end)
+          if (sf == null || st == null) continue
 
-        // 若 edit 与被替换区间 [from, to] 重叠，跳过（避免破坏主插入）
-        if (inserted) {
-          if (sf < to && st > from) continue
-          // 映射到当前文档
-          let delta = inserted.text.length - (inserted.to - inserted.from)
-          let nf = sf >= inserted.to ? sf + delta : sf
-          let nt = st >= inserted.to ? st + delta : st
-          if (nf > nt) continue
-          changes.push({from: nf, to: nt, insert: edit.newText})
-        } else {
-          // snippet 路径：无法精确映射，退化为直接使用原位置（可能偏移）
-          changes.push({from: sf, to: st, insert: edit.newText})
+          // 若 edit 与被替换区间 [from, to] 重叠，跳过（避免破坏主插入）
+          if (inserted) {
+            if (sf < to && st > from) continue
+            // 映射到当前文档
+            let delta = inserted.text.length - (inserted.to - inserted.from)
+            let nf = sf >= inserted.to ? sf + delta : sf
+            let nt = st >= inserted.to ? st + delta : st
+            if (nf > nt) continue
+            changes.push({from: nf, to: nt, insert: edit.newText})
+          } else {
+            // snippet 路径：无法精确映射，退化为直接使用原位置（可能偏移）
+            changes.push({from: sf, to: st, insert: edit.newText})
+          }
         }
       }
       if (changes.length) view.dispatch({changes})
